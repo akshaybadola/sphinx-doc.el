@@ -4,6 +4,8 @@
 
 ;; Author: Vineet Naik <naikvin@gmail.com>
 ;; URL: https://github.com/naiquevin/sphinx-doc.el
+;; Package-Version: 20210213.1250
+;; Package-Commit: 1eda612a44ef027e5229895daa77db99a21b8801
 ;; Version: 0.3.0
 ;; Keywords: Sphinx, Python
 ;; Package-Requires: ((s "1.9.0") (cl-lib "0.5") (dash "2.10.0"))
@@ -153,9 +155,10 @@
    :fields (append
             (-mapcat 'sphinx-doc-arg->fields
                      (sphinx-doc-fndef-args f))
-             (list (make-sphinx-doc-field :key "returns")
-                   ;;(make-sphinx-doc-field :key "rtype")
-                   ))))
+             (list (make-sphinx-doc-field :key "returns")))
+   :before-fields (pcase sphinx-doc-style
+                    ('google "Args:")
+                    (_ nil))))
 
 (defun sphinx-doc-split-args (input)
   "Like (split-string input \",\") but don't split on coma inside type hints"
@@ -205,7 +208,25 @@ Returns nil if string is not a function definition."
     nil))
 
 
-(defun sphinx-doc-field->str (f)
+(defvar sphinx-doc-style 'google)
+(defun sphinx-doc-field->str-google (f)
+  "Convert a field object F to its google style representation."
+  (cond ((and (stringp (sphinx-doc-field-arg f))
+              (stringp (sphinx-doc-field-type f)))
+         (s-format "    ${arg} (${type}): ${desc}"
+                   'aget
+                   `(("type" . ,(sphinx-doc-field-type f))
+                     ("arg" . ,(sphinx-doc-field-arg f))
+                     ("desc" . ,(sphinx-doc-field-desc f)))))
+        ((stringp (sphinx-doc-field-arg f))
+         (s-format "    ${arg}: ${desc}"
+                   'aget
+                   `(("arg" . ,(sphinx-doc-field-arg f))
+                     ("desc" . ,(sphinx-doc-field-desc f)))))
+        (t "")))
+
+
+(defun sphinx-doc-field->str-standard (f)
   "Convert a field object F to it's string representation."
   (cond ((and (stringp (sphinx-doc-field-arg f))
               (stringp (sphinx-doc-field-type f)))
@@ -226,8 +247,15 @@ Returns nil if string is not a function definition."
                      `(("key" . ,(sphinx-doc-field-key f))
                        ("desc" . ,(sphinx-doc-field-desc f)))))))
 
+(defun sphinx-doc-field->str (f)
+  "Convert a field object F to it's string representation."
+  (pcase sphinx-doc-style
+    ('standard (sphinx-doc-field->str-standard f))
+    ('google (sphinx-doc-field->str-google f))
+    (_ (user-error "Uknown style"))))
 
-(defun sphinx-doc-doc->str (ds)
+
+(defun sphinx-doc-doc->str (ds &optional no-newline-post-before)
   "Convert a doc object DS into string representation."
   (s-join
    "\n"
@@ -236,7 +264,8 @@ Returns nil if string is not a function definition."
     (list (s-format "\"\"\"$0\n" 'elt (list (sphinx-doc-doc-summary ds)))
           (when (and (sphinx-doc-doc-before-fields ds)
                      (not (string= (sphinx-doc-doc-before-fields ds) "")))
-            (concat (sphinx-doc-doc-before-fields ds) "\n"))
+            (concat (sphinx-doc-doc-before-fields ds)
+                    (if no-newline-post-before "" "\n")))
           (s-join "\n" (mapcar #'sphinx-doc-field->str
                                (sphinx-doc-doc-fields ds)))
           ""
@@ -438,23 +467,50 @@ function body is indented from the beginning of the line"
       (kill-region (- (elt ps 0) 3) (+ (elt ps 1) indent)))))
 
 
-(defun sphinx-doc-insert-doc (doc)
+(defun sphinx-doc-util-python-docstring-bounds ()
+  "Return list of docstring bounds for current function.
+We assume that docstring is a triple quote and not a single quote
+of any kind."
+  (save-excursion
+    (unless (python-info-looking-at-beginning-of-defun)
+      (python-nav-beginning-of-defun))
+    (python-nav-end-of-statement)
+    (forward-line)
+    (beginning-of-line)
+    (skip-chars-forward "[:space:]")
+    (when (python-info-docstring-p)
+      (progn (python-nav-beginning-of-statement)
+             (when (looking-at "\\(\"\\|'\\)")
+               (cons (point)
+                     (prog2 (python-nav-end-of-statement)
+                         (point)
+                       (python-nav-beginning-of-statement))))))))
+
+;; (defun sphinx-doc-insert-doc (doc &optional no-newline-post-before)
+;;   "Insert the DOC as string for the current Python function."
+;;   (save-excursion
+;;     (search-forward-regexp sphinx-doc-fun-end-regex)
+;;     (forward-line -1)
+;;     (move-end-of-line nil)
+;;     (newline-and-indent)
+;;     (insert (sphinx-doc-doc->str doc no-newline-post-before))))
+
+;; They both work
+;; This one's mine
+(defun sphinx-doc-insert-doc (doc &optional no-newline-post-before)
   "Insert the DOC as string for the current Python function."
   (save-excursion
-    (search-forward-regexp sphinx-doc-fun-end-regex)
-    (forward-line -1)
-    (move-end-of-line nil)
-    (newline-and-indent)
-    (insert (sphinx-doc-doc->str doc))))
-
+    (python-nav--beginning-of-defun)
+    (python-nav-end-of-statement)
+    (newline)
+    (insert (sphinx-doc-doc->str doc no-newline-post-before))))
 
 (defun sphinx-doc-indent-doc (indent)
   "Indent docstring for the current function.
 INDENT is the level of indentation"
   (save-excursion
-    (let ((ps (sphinx-doc-get-region "\"\"\"" "\"\"\"")))
-      (indent-rigidly (elt ps 0) (elt ps 1) indent))))
-
+    (pcase-let ((`(,start . ,end) (sphinx-doc-util-python-docstring-bounds)))
+      (indent-rigidly start end indent))))
 
 (defun sphinx-doc ()
   "Insert docstring for the Python function definition at point.
@@ -499,6 +555,13 @@ per the requirement of Sphinx documentation generator."
                 python-indent)
                (t 4)))))
 
+
+(defun sphinx-doc-indent-doc (indent)
+  "Indent docstring for the current function.
+INDENT is the level of indentation"
+  (save-excursion
+    (pcase-let ((`(,start . ,end) (my/python-docstring-bounds)))
+      (indent-rigidly start end indent))))
 
 (provide 'sphinx-doc)
 
