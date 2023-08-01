@@ -76,9 +76,15 @@
 (defconst sphinx-doc-returns-variants '("returns" "return"))
 
 (defcustom sphinx-doc-python-indent t
-  "If non-nil, the docstring will be indented.")
+  "If non-nil, the docstring will be indented."
+  :type 'boolean
+  :group 'sphinx-doc)
+
+
 (defcustom sphinx-doc-include-types nil
-  "If non-nil, the docstring will also include the type.")
+  "If non-nil, the docstring will also include the type."
+  :type 'boolean
+  :group 'sphinx-doc)
 
 ;; struct definitions
 
@@ -353,6 +359,33 @@ FIELDS-PARA is the fields section of the docstring."
                     (split-string (s-join "\n" fields-para) "\n:")))))
 
 
+;; (defun sphinx-doc-merge-strings (f1 f2)
+;;   (pcase `(,f1  ,f2)
+;;     ('(""  "") "")
+;;     ('(,a  "") a)
+;;     ('(""  ,b) b)
+;;     (`(,a  ,b) (concat a b))
+;;     (_ (error "Unknown values for before fields"))))
+
+;; ;; From python-stuff.el
+;; (defun sphinx-doc-merge-docs (old new)
+;;   "Merge OLD and NEW doc objects.
+;; Effectively, only the fields field of new doc are merged whereas
+;; the remaining fields of the old object stay as they are."
+;;   (let ((before-fields (sphinx-doc-merge-strings
+;;                         (sphinx-doc-doc-before-fields old)
+;;                         (sphinx-doc-doc-before-fields new)))
+;;         (after-fields (sphinx-doc-merge-strings
+;;                         (sphinx-doc-doc-after-fields old)
+;;                         (sphinx-doc-doc-after-fields new))))
+;;     (make-sphinx-doc-doc
+;;      :summary (sphinx-doc-doc-summary old)
+;;      :before-fields before-fields
+;;      :after-fields after-fields
+;;      :fields (sphinx-doc-merge-fields
+;;               (sphinx-doc-doc-fields old)
+;;               (sphinx-doc-doc-fields new)))))
+
 (defun sphinx-doc-merge-docs (old new)
   "Merge OLD and NEW doc objects.
 Effectively, only the fields field of new doc are merged whereas
@@ -560,7 +593,7 @@ per the requirement of Sphinx documentation generator."
   "Indent docstring for the current function.
 INDENT is the level of indentation"
   (save-excursion
-    (pcase-let ((`(,start . ,end) (my/python-docstring-bounds)))
+    (pcase-let ((`(,start . ,end) (sphinx-doc-util-python-docstring-bounds)))
       (indent-rigidly start end indent))))
 
 (provide 'sphinx-doc)
